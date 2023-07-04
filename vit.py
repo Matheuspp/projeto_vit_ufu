@@ -5,6 +5,11 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, SubsetRandomSampler
 import numpy as np
+from vit_pytorch import SimpleViT
+from torchvision.models import resnet50
+
+from vit_pytorch.distill import DistillableViT, DistillWrapper
+
 
 
 def val_prepare(val_size, train_set):
@@ -17,7 +22,7 @@ def val_prepare(val_size, train_set):
     return SubsetRandomSampler(train_idx), SubsetRandomSampler(valid_idx)
     
 
-batch_size = 1024
+batch_size = 32
 
 # Set the device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -46,10 +51,35 @@ train_loader = torch.utils.data.DataLoader(train_dataset, sampler=tSamp, batch_s
 val_loader = torch.utils.data.DataLoader(train_dataset, sampler=vSamp, batch_size=batch_size)
 
 # Initialize the ResNet-18 model
-model = torchvision.models.resnet18(pretrained=False)
+#model = torchvision.models.resnet18(pretrained=False)
 num_classes = len(train_dataset.classes)
-model.fc = nn.Linear(model.fc.in_features, num_classes)
-model.to(device)
+#model.fc = nn.Linear(model.fc.in_features, num_classes)
+#model.to(device)
+##======================================================================
+teacher = resnet50(pretrained = True)
+
+v = DistillableViT(
+    image_size = 100,
+    patch_size = 32,
+    num_classes = num_classes,
+    dim = 1024,
+    depth = 6,
+    heads = 8,
+    mlp_dim = 2048,
+    dropout = 0.1,
+    emb_dropout = 0.1
+)
+
+distiller = DistillWrapper(
+    student = v,
+    teacher = teacher,
+    temperature = 3,           # temperature of distillation
+    alpha = 0.5,               # trade between main loss and distillation loss
+    hard = False               # whether to use soft or hard distillation
+)
+
+
+model = distiller
 
 # Define loss function and optimizer
 criterion = nn.CrossEntropyLoss()
@@ -68,9 +98,11 @@ for epoch in range(num_epochs):
         labels = labels.to(device)
 
         optimizer.zero_grad()
+        print(inputs.shape)
+        print(labels.shape)
 
-        outputs = model(inputs)
-        loss = criterion(outputs, labels)
+        loss = model(inputs, labels)
+        #loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
 
@@ -81,19 +113,19 @@ for epoch in range(num_epochs):
             inputs = inputs.to(device)
             labels = labels.to(device)
 
-            outputs = model(inputs)
-            vloss = criterion(outputs, labels)
+            vloss = model(inputs, labels)
+            #vloss = criterion(outputs, labels)
             val_loss += vloss.item()
         
     if val_loss < min_loss:
         min_loss = val_loss
-        torch.save(model, 'model.pth')
+        torch.save(model, 'model_vit.pth')
         print(f'saving model at epoch {epoch}')
         print(f'Epoch {epoch + 1}, Batch {i + 1}: loss {running_loss / 200:.3f} val_loss {val_loss / 200:.3f}')
             
 
 print('Training finished!')
-
+"""
 # Evaluation on the test set
 model.eval()  # Switch to evaluation mode
 correct = 0
@@ -110,4 +142,4 @@ with torch.no_grad():
 
 accuracy = 100 * correct / total
 print(f'Test Accuracy: {accuracy:.2f}%')
-
+"""
